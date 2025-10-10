@@ -1,0 +1,148 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Supermarket IoT - HD (SQS + DLQ + Dedupe)
+
+Globals:
+  Function:
+    Runtime: nodejs20.x
+    Timeout: 30
+    MemorySize: 256
+    Tracing: Active
+
+Parameters:
+  InventoryTableName:
+    Type: String
+    Default: Inventory
+  OrdersTableName:
+    Type: String
+    Default: Orders
+
+Resources:
+  InventoryDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${AWS::StackName}-inventory-dlq"
+
+  OrdersDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${AWS::StackName}-orders-dlq"
+
+  InventoryQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${AWS::StackName}-inventory-queue"
+      VisibilityTimeout: 60
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt InventoryDLQ.Arn
+        maxReceiveCount: 5
+
+  OrdersQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${AWS::StackName}-orders-queue"
+      VisibilityTimeout: 60
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt OrdersDLQ.Arn
+        maxReceiveCount: 5
+
+  DedupeTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${AWS::StackName}-Dedupe"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: EventId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: EventId
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: ExpiresAt
+        Enabled: true
+
+  ForwarderFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-ForwarderFn"
+      CodeUri: services/forwarder
+      Handler: src/index.handler
+      Policies:
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt InventoryQueue.QueueName
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt OrdersQueue.QueueName
+      Environment:
+        Variables:
+          INVENTORY_QUEUE_URL: !Ref InventoryQueue
+          ORDERS_QUEUE_URL: !Ref OrdersQueue
+      Events:
+        ForwardInventory:
+          Type: HttpApi
+          Properties:
+            Path: /forward/inventory
+            Method: POST
+        ForwardOrders:
+          Type: HttpApi
+          Properties:
+            Path: /forward/orders
+            Method: POST
+
+  InventoryConsumerFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-InventoryConsumerFn"
+      CodeUri: services/inventory-consumer
+      Handler: src/index.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref InventoryTableName
+        - SQSPollerPolicy:
+            QueueName: !GetAtt InventoryQueue.QueueName
+      Environment:
+        Variables:
+          INVENTORY_TABLE: !Ref InventoryTableName
+      Events:
+        InventorySQSEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt InventoryQueue.Arn
+            BatchSize: 10
+            MaximumBatchingWindowInSeconds: 1
+
+  OrdersConsumerFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-OrdersConsumerFn"
+      CodeUri: services/orders-consumer
+      Handler: src/index.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref OrdersTableName
+        - DynamoDBCrudPolicy:
+            TableName: !Ref DedupeTable
+        - SQSPollerPolicy:
+            QueueName: !GetAtt OrdersQueue.QueueName
+      Environment:
+        Variables:
+          ORDERS_TABLE: !Ref OrdersTableName
+          DEDUPE_TABLE: !Ref DedupeTable
+          DEDUPE_TTL_HOURS: "2"
+      Events:
+        OrdersSQSEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt OrdersQueue.Arn
+            BatchSize: 10
+            MaximumBatchingWindowInSeconds: 1
+
+Outputs:
+  ForwarderApiUrl:
+    Description: "Base URL for HTTP API (use /forward/inventory and /forward/orders)"
+    Value: !Sub "https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+  InventoryQueueUrl:
+    Value: !Ref InventoryQueue
+  OrdersQueueUrl:
+    Value: !Ref OrdersQueue
+  DedupeTableName:
+    Value: !Ref DedupeTable
