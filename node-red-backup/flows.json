@@ -1,0 +1,877 @@
+[
+    {
+        "id": "f0000001a0000000",
+        "type": "tab",
+        "label": "Supermarket IoT",
+        "disabled": false,
+        "info": ""
+    },
+    {
+        "id": "0c323b7b12f4a863",
+        "type": "tab",
+        "label": "Supermarket IoT HD",
+        "disabled": false,
+        "info": "",
+        "env": []
+    },
+    {
+        "id": "5c9a05c0eacc39e1",
+        "type": "tab",
+        "label": "Forwarder SQS Demo",
+        "disabled": false,
+        "info": ""
+    },
+    {
+        "id": "e7339257ac88bce6",
+        "type": "mqtt-broker",
+        "name": "Hive MQTT",
+        "broker": "broker.hivemq.com",
+        "port": 1883,
+        "clientid": "",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": 4,
+        "keepalive": 60,
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "02a18a0cbac37766",
+        "type": "global-config",
+        "env": [
+            {
+                "name": "API_BASE_URL",
+                "value": "https://0485i4jbx0.execute-api.us-east-1.amazonaws.com",
+                "type": "str"
+            }
+        ],
+        "modules": {}
+    },
+    {
+        "id": "mqtt-broker-1",
+        "type": "mqtt-broker",
+        "name": "Local Mosquitto",
+        "broker": "localhost",
+        "port": "1883",
+        "clientid": "",
+        "usetls": false,
+        "protocolVersion": "4",
+        "keepalive": "60",
+        "cleansession": true
+    },
+    {
+        "id": "mqtt-in-1",
+        "type": "mqtt in",
+        "z": "f0000001a0000000",
+        "name": "Shelf Readings",
+        "topic": "stores/+/sensors/+",
+        "qos": "0",
+        "datatype": "auto",
+        "broker": "mqtt-broker-1",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 150,
+        "y": 80,
+        "wires": [
+            [
+                "fn-avg"
+            ]
+        ]
+    },
+    {
+        "id": "fn-avg",
+        "type": "function",
+        "z": "f0000001a0000000",
+        "name": "Rolling Avg (N=5)",
+        "func": "const N = 5;\nconst key = msg.topic;\ncontext.arr = context.arr || {};\nconst arr = context.arr[key] = (context.arr[key] || []);\nconst data = JSON.parse(msg.payload);\narr.push(data.current);\nif (arr.length > N) arr.shift();\nconst avg = Math.round(arr.reduce((a,b)=>a+b,0)/arr.length);\nmsg.payload = { ...data, avg };\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 310,
+        "y": 140,
+        "wires": [
+            [
+                "fn-z"
+            ]
+        ]
+    },
+    {
+        "id": "fn-z",
+        "type": "function",
+        "z": "f0000001a0000000",
+        "name": "Z-Score Filter",
+        "func": "const key = msg.topic;\ncontext.stats = context.stats || {};\nconst s = context.stats[key] = context.stats[key] || {m:0,v:0,n:0};\nconst x = msg.payload.avg;\n// Welford update\ns.n++;\nconst delta = x - s.m;\ns.m += delta / s.n;\ns.v += delta * (x - s.m);\nconst std = s.n > 1 ? Math.sqrt(s.v / (s.n-1)) : 0;\nmsg.payload.std = std;\nmsg.payload.mean = s.m;\nmsg.payload.isOutlier = std>0 ? Math.abs((x - s.m)/std) > 3 : false;\nif (msg.payload.isOutlier) return null;\nreturn msg;",
+        "outputs": 1,
+        "x": 440,
+        "y": 200,
+        "wires": [
+            [
+                "fn-thresh",
+                "dbg1"
+            ]
+        ]
+    },
+    {
+        "id": "fn-thresh",
+        "type": "function",
+        "z": "f0000001a0000000",
+        "name": "Threshold + Hysteresis",
+        "func": "const h = 2; // hysteresis\nconst p = msg.payload;\nconst low = p.avg < p.threshold;\ncontext.wasLow = context.wasLow || {};\nconst key = `${p.storeId}/${p.skuId}`;\nconst was = context.wasLow[key] || false;\nlet fireLow = false;\nif (!was && low) { fireLow = true; context.wasLow[key] = true; }\nif (was && p.avg >= p.threshold + h) { context.wasLow[key] = false; }\nmsg.lowStock = fireLow;\nreturn msg;",
+        "outputs": 1,
+        "x": 560,
+        "y": 60,
+        "wires": [
+            [
+                "http-inv",
+                "sw-low",
+                "dbg2"
+            ]
+        ]
+    },
+    {
+        "id": "http-inv",
+        "type": "http request",
+        "z": "f0000001a0000000",
+        "name": "POST /inventory/update",
+        "method": "POST",
+        "ret": "obj",
+        "paytoqs": "ignore",
+        "url": "https://0485i4jbx0.execute-api.us-east-1.amazonaws.com/inventory/update",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "insecureHTTPParser": false,
+        "authType": "",
+        "senderr": false,
+        "headers": [
+            {
+                "keyType": "Content-Type",
+                "keyValue": "",
+                "valueType": "application/json",
+                "valueValue": ""
+            }
+        ],
+        "x": 810,
+        "y": 60,
+        "wires": [
+            [
+                "dbg3"
+            ]
+        ]
+    },
+    {
+        "id": "sw-low",
+        "type": "switch",
+        "z": "f0000001a0000000",
+        "name": "If lowStock",
+        "property": "lowStock",
+        "propertyType": "msg",
+        "rules": [
+            {
+                "t": "true"
+            }
+        ],
+        "checkall": "true",
+        "repair": false,
+        "outputs": 1,
+        "x": 770,
+        "y": 140,
+        "wires": [
+            [
+                "http-low"
+            ]
+        ]
+    },
+    {
+        "id": "http-low",
+        "type": "http request",
+        "z": "f0000001a0000000",
+        "name": "POST /events/stock-low",
+        "method": "POST",
+        "ret": "obj",
+        "paytoqs": "ignore",
+        "url": "https://0485i4jbx0.execute-api.us-east-1.amazonaws.com/events/stock-low",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "insecureHTTPParser": false,
+        "authType": "",
+        "senderr": false,
+        "headers": [
+            {
+                "keyType": "Content-Type",
+                "keyValue": "",
+                "valueType": "application/json",
+                "valueValue": ""
+            }
+        ],
+        "x": 950,
+        "y": 180,
+        "wires": [
+            [
+                "dbg4"
+            ]
+        ]
+    },
+    {
+        "id": "dbg1",
+        "type": "debug",
+        "z": "f0000001a0000000",
+        "name": "avg",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "x": 590,
+        "y": 280,
+        "wires": []
+    },
+    {
+        "id": "dbg2",
+        "type": "debug",
+        "z": "f0000001a0000000",
+        "name": "thresh",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "lowStock",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 750,
+        "y": 220,
+        "wires": []
+    },
+    {
+        "id": "dbg3",
+        "type": "debug",
+        "z": "f0000001a0000000",
+        "name": "inv-resp",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "true",
+        "targetType": "full",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 960,
+        "y": 100,
+        "wires": []
+    },
+    {
+        "id": "dbg4",
+        "type": "debug",
+        "z": "f0000001a0000000",
+        "name": "low-resp",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "true",
+        "x": 1020,
+        "y": 240,
+        "wires": []
+    },
+    {
+        "id": "ae88adbe53975e5a",
+        "type": "mqtt in",
+        "z": "0c323b7b12f4a863",
+        "name": "Shelf Readings",
+        "topic": "stores/+/sensors/+",
+        "qos": "0",
+        "datatype": "auto",
+        "broker": "mqtt-broker-1",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 80,
+        "y": 140,
+        "wires": [
+            [
+                "ca2b1dcabc2d3513"
+            ]
+        ]
+    },
+    {
+        "id": "ca2b1dcabc2d3513",
+        "type": "function",
+        "z": "0c323b7b12f4a863",
+        "name": "Rolling Avg (N=5)",
+        "func": "const N = 5;\nconst key = msg.topic;\ncontext.arr = context.arr || {};\nconst arr = context.arr[key] = (context.arr[key] || []);\nconst data = JSON.parse(msg.payload);\narr.push(data.current);\nif (arr.length > N) arr.shift();\nconst avg = Math.round(arr.reduce((a,b)=>a+b,0)/arr.length);\nmsg.payload = { ...data, avg };\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 240,
+        "y": 200,
+        "wires": [
+            [
+                "f9181c3e46fa7ff0"
+            ]
+        ]
+    },
+    {
+        "id": "f9181c3e46fa7ff0",
+        "type": "function",
+        "z": "0c323b7b12f4a863",
+        "name": "Z-Score Filter",
+        "func": "const key = msg.topic;\ncontext.stats = context.stats || {};\nconst s = context.stats[key] = context.stats[key] || {m:0,v:0,n:0};\nconst x = msg.payload.avg;\n// Welford update\ns.n++;\nconst delta = x - s.m;\ns.m += delta / s.n;\ns.v += delta * (x - s.m);\nconst std = s.n > 1 ? Math.sqrt(s.v / (s.n-1)) : 0;\nmsg.payload.std = std;\nmsg.payload.mean = s.m;\nmsg.payload.isOutlier = std>0 ? Math.abs((x - s.m)/std) > 3 : false;\nif (msg.payload.isOutlier) return null;\nreturn msg;",
+        "outputs": 1,
+        "x": 370,
+        "y": 260,
+        "wires": [
+            [
+                "105f826da70f8aad",
+                "d7056a859ce6804b"
+            ]
+        ]
+    },
+    {
+        "id": "105f826da70f8aad",
+        "type": "function",
+        "z": "0c323b7b12f4a863",
+        "name": "Threshold + Hysteresis",
+        "func": "const h = 2; // hysteresis\nconst p = msg.payload;\nconst low = p.avg < p.threshold;\ncontext.wasLow = context.wasLow || {};\nconst key = `${p.storeId}/${p.skuId}`;\nconst was = context.wasLow[key] || false;\nlet fireLow = false;\nif (!was && low) { fireLow = true; context.wasLow[key] = true; }\nif (was && p.avg >= p.threshold + h) { context.wasLow[key] = false; }\nmsg.lowStock = fireLow;\nreturn msg;",
+        "outputs": 1,
+        "x": 490,
+        "y": 120,
+        "wires": [
+            [
+                "12b5e9ad07affe64",
+                "c8137c1e5a3e0340",
+                "ca3de9a05e62c2d7"
+            ]
+        ]
+    },
+    {
+        "id": "12b5e9ad07affe64",
+        "type": "http request",
+        "z": "0c323b7b12f4a863",
+        "d": true,
+        "name": "POST /inventory/update",
+        "method": "POST",
+        "ret": "obj",
+        "paytoqs": "ignore",
+        "url": "https://0485i4jbx0.execute-api.us-east-1.amazonaws.com/inventory/update",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "insecureHTTPParser": false,
+        "authType": "",
+        "senderr": false,
+        "headers": [
+            {
+                "keyType": "Content-Type",
+                "keyValue": "",
+                "valueType": "application/json",
+                "valueValue": ""
+            }
+        ],
+        "x": 740,
+        "y": 120,
+        "wires": [
+            [
+                "95163204f7e15416"
+            ]
+        ]
+    },
+    {
+        "id": "c8137c1e5a3e0340",
+        "type": "switch",
+        "z": "0c323b7b12f4a863",
+        "name": "If lowStock",
+        "property": "lowStock",
+        "propertyType": "msg",
+        "rules": [
+            {
+                "t": "true"
+            }
+        ],
+        "checkall": "true",
+        "repair": false,
+        "outputs": 1,
+        "x": 700,
+        "y": 200,
+        "wires": [
+            [
+                "74936e57aa696f71"
+            ]
+        ]
+    },
+    {
+        "id": "74936e57aa696f71",
+        "type": "http request",
+        "z": "0c323b7b12f4a863",
+        "d": true,
+        "name": "POST /events/stock-low",
+        "method": "POST",
+        "ret": "obj",
+        "paytoqs": "ignore",
+        "url": "https://0485i4jbx0.execute-api.us-east-1.amazonaws.com/events/stock-low",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "insecureHTTPParser": false,
+        "authType": "",
+        "senderr": false,
+        "headers": [
+            {
+                "keyType": "Content-Type",
+                "keyValue": "",
+                "valueType": "application/json",
+                "valueValue": ""
+            }
+        ],
+        "x": 880,
+        "y": 240,
+        "wires": [
+            [
+                "35e69da0e8e67fb8"
+            ]
+        ]
+    },
+    {
+        "id": "d7056a859ce6804b",
+        "type": "debug",
+        "z": "0c323b7b12f4a863",
+        "name": "avg",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "x": 520,
+        "y": 340,
+        "wires": []
+    },
+    {
+        "id": "ca3de9a05e62c2d7",
+        "type": "debug",
+        "z": "0c323b7b12f4a863",
+        "name": "thresh",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "lowStock",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 680,
+        "y": 280,
+        "wires": []
+    },
+    {
+        "id": "95163204f7e15416",
+        "type": "debug",
+        "z": "0c323b7b12f4a863",
+        "name": "inv-resp",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "true",
+        "targetType": "full",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 890,
+        "y": 160,
+        "wires": []
+    },
+    {
+        "id": "35e69da0e8e67fb8",
+        "type": "debug",
+        "z": "0c323b7b12f4a863",
+        "name": "low-resp",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "true",
+        "x": 950,
+        "y": 300,
+        "wires": []
+    },
+    {
+        "id": "ccdfa210edf9423f",
+        "type": "http request",
+        "z": "0c323b7b12f4a863",
+        "name": "POST Inventory SQS",
+        "method": "POST",
+        "ret": "obj",
+        "paytoqs": "ignore",
+        "url": "URL: https://ss1jn0wi2e.execute-api.us-east-1.amazonaws.com/forward/inventory",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "insecureHTTPParser": false,
+        "authType": "",
+        "senderr": false,
+        "headers": [
+            {
+                "keyType": "Content-Type",
+                "keyValue": "",
+                "valueType": "application/json",
+                "valueValue": ""
+            }
+        ],
+        "x": 480,
+        "y": 480,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "bf15728f4da27034",
+        "type": "http request",
+        "z": "0c323b7b12f4a863",
+        "name": "POST Low-Stock Order SQS",
+        "method": "POST",
+        "ret": "obj",
+        "paytoqs": "ignore",
+        "url": "https://ss1jn0wi2e.execute-api.us-east-1.amazonaws.com/forward/orders",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "insecureHTTPParser": false,
+        "authType": "",
+        "senderr": false,
+        "headers": [
+            {
+                "keyType": "Content-Type",
+                "keyValue": "",
+                "valueType": "application/json",
+                "valueValue": ""
+            }
+        ],
+        "x": 800,
+        "y": 480,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "d811ad7cdc6034de",
+        "type": "function",
+        "z": "0c323b7b12f4a863",
+        "name": "Build Inventory",
+        "func": "// Build Inventory JSON body\n// Assumes upstream set storeId, skuId, current (avg), threshold, ts\n// If you already have msg.payload in this shape, this just normalizes it.\n\nconst p = msg.payload || {};\nconst body = {\n    storeId: p.storeId || msg.storeId || \"S1\",\n    skuId: p.skuId || msg.skuId || \"SKU1\",\n    current: typeof p.current === \"number\" ? p.current : Number(p.current ?? 25),\n    threshold: typeof p.threshold === \"number\" ? p.threshold : Number(p.threshold ?? 30),\n    ts: p.ts || Date.now()\n};\n\nmsg.headers = { \"Content-Type\": \"application/json\" };\nmsg.payload = body;      // <-- THIS is the HTTP POST body\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 160,
+        "y": 380,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "d28ffb1e49e1e08b",
+        "type": "function",
+        "z": "0c323b7b12f4a863",
+        "name": "Build Low-Stock Orders",
+        "func": "// Build Low-Stock event JSON body\n// Only send when your low-stock condition is true (upstream logic).\n// If your upstream already builds this shape, this simply normalizes it.\n\nconst p = msg.payload || {};\nconst body = {\n    storeId: p.storeId || msg.storeId || \"S1\",\n    skuId: p.skuId || msg.skuId || \"SKU1\",\n    current: typeof p.current === \"number\" ? p.current : Number(p.current ?? 5),\n    threshold: typeof p.threshold === \"number\" ? p.threshold : Number(p.threshold ?? 30),\n    ts: p.ts || Date.now()\n    // eventId is automatically added by the Forwarder if missing\n};\n\n// If your upstream has a boolean like msg.low === true, you can guard here:\nif (msg.low === false) {\n    return null; // don't send anything when not low-stock\n}\n\nmsg.headers = { \"Content-Type\": \"application/json\" };\nmsg.payload = body;      // <-- THIS is the HTTP POST body\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 370,
+        "y": 740,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "e091998c570b89b9",
+        "type": "function",
+        "z": "0c323b7b12f4a863",
+        "name": "Batching",
+        "func": "// Batch up to 10 or 200ms\nconst MAX = 10, WAIT = 200;\nlet buf = context.get('buf') || [];\nlet timer = context.get('timer');\n\nbuf.push(msg.payload);\nif (!timer) {\n    timer = setTimeout(() => {\n        const out = { payload: buf };\n        context.set('buf', []);\n        context.set('timer', null);\n        node.send(out);\n    }, WAIT);\n    context.set('timer', timer);\n}\nif (buf.length >= MAX) {\n    clearTimeout(timer);\n    const out = { payload: buf };\n    context.set('buf', []);\n    context.set('timer', null);\n    node.send(out);\n}\nreturn null;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 260,
+        "y": 580,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "bdd6e36218098a46",
+        "type": "inject",
+        "z": "5c9a05c0eacc39e1",
+        "name": "TEST: Inventory sample",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "{\"storeId\":\"S1\",\"skuId\":\"SKU1\",\"current\":27.4,\"threshold\":30,\"ts\":1733899982000}",
+        "payloadType": "json",
+        "x": 180,
+        "y": 120,
+        "wires": [
+            [
+                "a26c7e01cd9706c9"
+            ]
+        ]
+    },
+    {
+        "id": "a26c7e01cd9706c9",
+        "type": "function",
+        "z": "5c9a05c0eacc39e1",
+        "name": "Build Inventory Body",
+        "func": "// Normalize/ensure inventory body on msg.payload\nconst p = msg.payload || {};\nconst body = {\n  storeId: p.storeId || msg.storeId || \"S1\",\n  skuId: p.skuId || msg.skuId || \"SKU1\",\n  current: typeof p.current === \"number\" ? p.current : Number(p.current ?? 25),\n  threshold: typeof p.threshold === \"number\" ? p.threshold : Number(p.threshold ?? 30),\n  ts: p.ts || Date.now()\n};\nmsg.headers = {\"Content-Type\":\"application/json\"};\nmsg.payload = body; // <-- HTTP POST body\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 420,
+        "y": 120,
+        "wires": [
+            [
+                "57172cbc3f125a6b",
+                "985d7fa6d280e880"
+            ]
+        ]
+    },
+    {
+        "id": "57172cbc3f125a6b",
+        "type": "http request",
+        "z": "5c9a05c0eacc39e1",
+        "name": "POST /forward/inventory",
+        "method": "POST",
+        "ret": "obj",
+        "paytoqs": "ignore",
+        "url": "https://ss1jn0wi2e.execute-api.us-east-1.amazonaws.com/forward/inventory",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "authType": "",
+        "x": 710,
+        "y": 120,
+        "wires": [
+            [
+                "5ad74aaf7a03c81b"
+            ]
+        ]
+    },
+    {
+        "id": "985d7fa6d280e880",
+        "type": "debug",
+        "z": "5c9a05c0eacc39e1",
+        "name": "Inventory Body → (POST payload)",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 720,
+        "y": 80,
+        "wires": []
+    },
+    {
+        "id": "5ad74aaf7a03c81b",
+        "type": "debug",
+        "z": "5c9a05c0eacc39e1",
+        "name": "Forwarder Response (inv)",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 980,
+        "y": 120,
+        "wires": []
+    },
+    {
+        "id": "343d3e315f543a65",
+        "type": "comment",
+        "z": "5c9a05c0eacc39e1",
+        "name": "Inventory → Forwarder → SQS (Body is msg.payload)",
+        "info": "",
+        "x": 260,
+        "y": 60,
+        "wires": []
+    },
+    {
+        "id": "928c7a2afb82f485",
+        "type": "inject",
+        "z": "5c9a05c0eacc39e1",
+        "name": "TEST: Low-stock sample",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "low",
+                "v": "true",
+                "vt": "bool"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "{\"storeId\":\"S1\",\"skuId\":\"SKU1\",\"current\":5,\"threshold\":30,\"ts\":1733899999000}",
+        "payloadType": "json",
+        "x": 170,
+        "y": 260,
+        "wires": [
+            [
+                "59cb0495bb0ba2b5"
+            ]
+        ]
+    },
+    {
+        "id": "59cb0495bb0ba2b5",
+        "type": "function",
+        "z": "5c9a05c0eacc39e1",
+        "name": "Build Low-Stock Body (guard on msg.low)",
+        "func": "// Only send if msg.low===true (or remove this guard if upstream ensures low-stock)\nif (msg.low === false) { return null; }\n\nconst p = msg.payload || {};\nconst body = {\n  storeId: p.storeId || msg.storeId || \"S1\",\n  skuId: p.skuId || msg.skuId || \"SKU1\",\n  current: typeof p.current === \"number\" ? p.current : Number(p.current ?? 5),\n  threshold: typeof p.threshold === \"number\" ? p.threshold : Number(p.threshold ?? 30),\n  ts: p.ts || Date.now()\n};\nmsg.headers = {\"Content-Type\":\"application/json\"};\nmsg.payload = body; // <-- HTTP POST body\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 470,
+        "y": 260,
+        "wires": [
+            [
+                "b2d1a4c3b5ae80d6",
+                "83ec16e7f09530c4"
+            ]
+        ]
+    },
+    {
+        "id": "b2d1a4c3b5ae80d6",
+        "type": "http request",
+        "z": "5c9a05c0eacc39e1",
+        "name": "POST /forward/orders",
+        "method": "POST",
+        "ret": "obj",
+        "paytoqs": "ignore",
+        "url": "https://ss1jn0wi2e.execute-api.us-east-1.amazonaws.com/forward/orders",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "authType": "",
+        "x": 740,
+        "y": 260,
+        "wires": [
+            [
+                "9a3abdfd715e8bb4"
+            ]
+        ]
+    },
+    {
+        "id": "83ec16e7f09530c4",
+        "type": "debug",
+        "z": "5c9a05c0eacc39e1",
+        "name": "Low-Stock Body → (POST payload)",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 760,
+        "y": 220,
+        "wires": []
+    },
+    {
+        "id": "9a3abdfd715e8bb4",
+        "type": "debug",
+        "z": "5c9a05c0eacc39e1",
+        "name": "Forwarder Response (orders)",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1000,
+        "y": 260,
+        "wires": []
+    },
+    {
+        "id": "e0c66d0acaef320f",
+        "type": "function",
+        "z": "5c9a05c0eacc39e1",
+        "name": "(Optional) Batch 10 or 200ms",
+        "func": "// Place this between Build Low-Stock Body and HTTP node to send arrays\nconst MAX = 10, WAIT = 200;\nlet buf = context.get('buf') || [];\nlet timer = context.get('timer');\n\nbuf.push(msg.payload);\nif (!timer) {\n  timer = setTimeout(() => {\n    const out = { payload: buf };\n    context.set('buf', []);\n    context.set('timer', null);\n    node.send(out);\n  }, WAIT);\n  context.set('timer', timer);\n}\nif (buf.length >= MAX) {\n  clearTimeout(timer);\n  const out = { payload: buf };\n  context.set('buf', []);\n  context.set('timer', null);\n  node.send(out);\n}\nreturn null;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 520,
+        "y": 320,
+        "wires": [
+            [
+                "b2d1a4c3b5ae80d6"
+            ]
+        ]
+    },
+    {
+        "id": "888b7cb9cb5927ae",
+        "type": "comment",
+        "z": "5c9a05c0eacc39e1",
+        "name": "Low-Stock → Forwarder → SQS (Body is msg.payload; batch optional)",
+        "info": "",
+        "x": 310,
+        "y": 200,
+        "wires": []
+    }
+]
