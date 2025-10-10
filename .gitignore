@@ -1,21 +1,27 @@
 # macOS
 .DS_Store
 
-# Node
+# Node / npm
 node_modules/
 npm-debug.log*
+package-lock.json
 
-# AWS SAM build artifacts
+# SAM / AWS build artifacts
 .aws-sam/
+.sam-cache/
+.sarif/
 
-# Env files
+# Local env & secrets
 *.env
+.env.*
+!.env.example
 
-# Editors
+# Editors / IDEs
 .vscode/
 .idea/
 
-# Logs & artifacts
-*.log
+# Misc
 coverage/
 dist/
+build/
+*.log

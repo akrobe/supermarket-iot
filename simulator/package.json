@@ -1,0 +1,6 @@
+{
+  "name": "supermarket-simulator",
+  "type": "module",
+  "version": "1.0.0",
+  "dependencies": { "mqtt": "^5.10.1", "dotenv": "^16.4.5" }
+}

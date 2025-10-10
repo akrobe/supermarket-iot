@@ -1,2 +1,21 @@
-# Auto detect text files and perform LF normalization
-* text=auto
+# Normalize line endings for text files
+* text=auto eol=lf
+
+# Treat these as text
+*.md text
+*.js text
+*.mjs text
+*.json text
+*.yaml text
+*.yml text
+*.css text
+*.html text
+*.sh text
+
+# Keep images/binaries untouched
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.pdf binary
+*.zip binary
