@@ -1,0 +1,21 @@
+# macOS
+.DS_Store
+
+# Node
+node_modules/
+npm-debug.log*
+
+# AWS SAM build artifacts
+.aws-sam/
+
+# Env files
+*.env
+
+# Editors
+.vscode/
+.idea/
+
+# Logs & artifacts
+*.log
+coverage/
+dist/
