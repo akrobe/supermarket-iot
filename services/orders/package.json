@@ -1,0 +1,9 @@
+{
+  "name": "orders-fn",
+  "type": "module",
+  "version": "1.0.0",
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.659.0",
+    "@aws-sdk/lib-dynamodb": "^3.659.0"
+  }
+}

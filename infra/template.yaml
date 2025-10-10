@@ -1,0 +1,126 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Supermarket IoT – Inventory & Orders API
+
+Globals:
+  Function:
+    Runtime: nodejs20.x
+    Timeout: 10
+    MemorySize: 256
+    Tracing: Active
+    Environment:
+      Variables:
+        INVENTORY_TABLE: !Ref InventoryTable
+        ORDERS_TABLE: !Ref OrdersTable
+        AWS_NODEJS_CONNECTION_REUSE_ENABLED: '1'
+
+Resources:
+  InventoryTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: StoreID
+          AttributeType: S
+        - AttributeName: SKU_ID
+          AttributeType: S
+      KeySchema:
+        - AttributeName: StoreID
+          KeyType: HASH
+        - AttributeName: SKU_ID
+          KeyType: RANGE
+      TableName: !Sub '${AWS::StackName}-Inventory'
+
+  OrdersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: Order_ID
+          AttributeType: S
+        - AttributeName: StoreID
+          AttributeType: S
+        - AttributeName: StatusCreated
+          AttributeType: S
+      KeySchema:
+        - AttributeName: Order_ID
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: OrdersByStoreStatus
+          KeySchema:
+            - AttributeName: StoreID
+              KeyType: HASH
+            - AttributeName: StatusCreated
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      TableName: !Sub '${AWS::StackName}-Orders'
+
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      CorsConfiguration:
+        AllowHeaders: ['*']
+        AllowMethods: ['GET','POST','OPTIONS']
+        AllowOrigins: ['*']
+
+  InventoryFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../services/inventory/
+      Handler: index.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref InventoryTable
+      Events:
+        InvUpdate:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /inventory/update
+            Method: POST
+        InvQuery:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /stores/{storeId}/inventory
+            Method: GET
+
+  OrdersFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../services/orders/
+      Handler: index.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref OrdersTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref InventoryTable
+      Events:
+        StockLow:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /events/stock-low
+            Method: POST
+        OrderStatus:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /orders/{orderId}/status
+            Method: POST
+        OrdersQuery:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /stores/{storeId}/orders
+            Method: GET
+
+Outputs:
+  ApiBaseUrl:
+    Description: Base URL for the HTTP API
+    Value: !Sub 'https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com'
+  InventoryTableName:
+    Value: !Ref InventoryTable
+  OrdersTableName:
+    Value: !Ref OrdersTable

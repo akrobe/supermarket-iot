@@ -1,0 +1,7 @@
+body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 2rem; }
+h1 { margin-bottom: 0.3rem; }
+.controls { margin: 1rem 0; display:flex; gap:1rem; align-items:center; }
+table { border-collapse: collapse; width: 100%; margin-bottom: 1.5rem; }
+th, td { border: 1px solid #ddd; padding: 0.5rem; text-align: left; }
+tr.low { background: #ffe6e6; }
+button { padding: 0.4rem 0.8rem; cursor: pointer; }
