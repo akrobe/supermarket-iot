@@ -1,0 +1,9 @@
+{
+  "name": "forwarder",
+  "type": "module",
+  "version": "1.0.0",
+  "dependencies": {
+    "@aws-sdk/client-sqs": "^3.614.0",
+    "ulid": "^3.0.1"
+  }
+}

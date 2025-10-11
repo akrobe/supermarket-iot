@@ -1,0 +1,10 @@
+{
+  "name": "orders-consumer",
+  "type": "module",
+  "version": "1.0.0",
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.614.0",
+    "@aws-sdk/lib-dynamodb": "^3.614.0",
+    "ulid": "^3.0.1"
+  }
+}
