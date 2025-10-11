@@ -1,0 +1,183 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: "HD upgrade: SQS buffering + DLQs + Dedupe + Forwarder API (side-by-side)"
+
+Parameters:
+  InventoryTableName:
+    Type: String
+    # If your existing Inventory table name differs, change this default:
+    Default: supermarket-iot-Inventory
+  OrdersTableName:
+    Type: String
+    # If your existing Orders table name differs, change this default:
+    Default: supermarket-iot-Orders
+  DedupeTtlHours:
+    Type: Number
+    Default: 2
+  NodeEnv:
+    Type: String
+    Default: production
+
+Globals:
+  Function:
+    Runtime: nodejs20.x
+    Architectures: [x86_64]
+    Timeout: 10
+    MemorySize: 256
+    Tracing: Active
+    Environment:
+      Variables:
+        NODE_ENV: !Ref NodeEnv
+
+Resources:
+  # ---------------- SQS + DLQs ----------------
+  InventoryDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: inventory-dlq
+
+  OrdersDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: orders-dlq
+
+  InventoryQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: inventory-queue
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt InventoryDLQ.Arn
+        maxReceiveCount: 5
+      VisibilityTimeout: 30
+
+  OrdersQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: orders-queue
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt OrdersDLQ.Arn
+        maxReceiveCount: 5
+      VisibilityTimeout: 30
+
+  # ---------------- Dedupe table ----------------
+  DedupeTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: supermarket-iot-Dedupe
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: EventId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: EventId
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: ExpiresAt
+        Enabled: true
+
+  # ---------------- Explicit HTTP API ----------------
+  ForwarderApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: '$default'
+
+  # ---------------- Forwarder Lambda + route on ForwarderApi ----------------
+  ForwarderFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: supermarket-iot-ForwarderFn
+      CodeUri: ../services/forwarder
+      Handler: index.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - sqs:SendMessage
+                - sqs:SendMessageBatch
+              Resource:
+                - !GetAtt InventoryQueue.Arn
+                - !GetAtt OrdersQueue.Arn
+      Environment:
+        Variables:
+          INVENTORY_QUEUE_URL: !Ref InventoryQueue
+          ORDERS_QUEUE_URL: !Ref OrdersQueue
+      Events:
+        ForwardRoute:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref ForwarderApi
+            Path: /forward/{target}
+            Method: POST
+            PayloadFormatVersion: '2.0'
+
+  # ---------------- Inventory Consumer ----------------
+  InventoryConsumerFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: supermarket-iot-InventoryConsumerFn
+      CodeUri: ../services/inventory-consumer
+      Handler: index.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref InventoryTableName
+        - Statement:
+            - Effect: Allow
+              Action:
+                - sqs:ReceiveMessage
+                - sqs:DeleteMessage
+                - sqs:ChangeMessageVisibility
+                - sqs:GetQueueAttributes
+              Resource: !GetAtt InventoryQueue.Arn
+      Environment:
+        Variables:
+          INVENTORY_TABLE: !Ref InventoryTableName
+      Events:
+        FromInventoryQueue:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt InventoryQueue.Arn
+            BatchSize: 10
+            MaximumBatchingWindowInSeconds: 1
+
+  # ---------------- Orders Consumer ----------------
+  OrdersConsumerFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: supermarket-iot-OrdersConsumerFn
+      CodeUri: ../services/orders-consumer
+      Handler: index.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref OrdersTableName
+        - DynamoDBCrudPolicy:
+            TableName: supermarket-iot-Dedupe
+        - Statement:
+            - Effect: Allow
+              Action:
+                - sqs:ReceiveMessage
+                - sqs:DeleteMessage
+                - sqs:ChangeMessageVisibility
+                - sqs:GetQueueAttributes
+              Resource: !GetAtt OrdersQueue.Arn
+      Environment:
+        Variables:
+          ORDERS_TABLE: !Ref OrdersTableName
+          DEDUPE_TABLE: supermarket-iot-Dedupe
+      Events:
+        FromOrdersQueue:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt OrdersQueue.Arn
+            BatchSize: 10
+            MaximumBatchingWindowInSeconds: 1
+
+Outputs:
+  ForwarderApiBaseUrl:
+    Description: Base URL for the Forwarder HTTP API
+    Value: !GetAtt ForwarderApi.ApiEndpoint
+  InventoryQueueUrl:
+    Description: URL of inventory-queue
+    Value: !Ref InventoryQueue
+  OrdersQueueUrl:
+    Description: URL of orders-queue
+    Value: !Ref OrdersQueue

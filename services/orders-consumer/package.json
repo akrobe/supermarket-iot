@@ -1,0 +1,19 @@
+{
+  "name": "orders-consumer-fn",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.907.0",
+    "@aws-sdk/lib-dynamodb": "^3.907.0",
+    "ulid": "^2.4.0"
+  },
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}

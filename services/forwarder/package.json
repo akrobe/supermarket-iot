@@ -1,0 +1,9 @@
+{
+  "name": "forwarder-fn",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "@aws-sdk/client-sqs": "^3.659.0"
+  }
+}

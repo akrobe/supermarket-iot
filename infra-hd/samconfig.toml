@@ -1,0 +1,11 @@
+version = 0.1
+
+[default.deploy.parameters]
+stack_name = "supermarket-iot-hd"
+resolve_s3 = true
+s3_prefix = "supermarket-iot-hd"
+region = "us-east-1"
+confirm_changeset = true
+capabilities = "CAPABILITY_IAM"
+parameter_overrides = "InventoryTableName=\"supermarket-iot-Inventory\" OrdersTableName=\"supermarket-iot-Orders\" DedupeTtlHours=\"2\" NodeEnv=\"production\""
+image_repositories = []
